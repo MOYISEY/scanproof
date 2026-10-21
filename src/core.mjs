@@ -93,6 +93,17 @@ export function addTasks(tasks,input,idFactory) {
   if(next.length>LIMITS.tasks)throw Error('Можно добавить до 100 заданий.');
   return next;
 }
+export function renameTask(tasks,id,input) {
+  const task=tasks.find(t=>t.id===id);
+  if(!task)throw Error('Задание больше не существует.');
+  const label=typeof input==='string'?input.trim():'';
+  if(!label)throw Error('Введите название задания.');
+  if(label.length>160)throw Error('Название задания: не больше 160 символов.');
+  if(/[\r\n]/.test(label))throw Error('Название задания должно быть в одну строку.');
+  if(tasks.some(t=>t.id!==id&&t.label.trim().toLocaleLowerCase('ru')===label.toLocaleLowerCase('ru')))throw Error('Такое название уже есть у другого задания. Связи не объединены.');
+  if(label===task.label)return tasks;
+  return tasks.map(t=>t.id===id?{...t,label}:t);
+}
 // Minimal PDF 1.4 writer. Each page embeds one already-rotated RGB JPEG.
 // Byte offsets, stream lengths and xref are calculated from encoded bytes.
 export function makePdf(images) {

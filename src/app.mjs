@@ -1,24 +1,40 @@
-import {LIMITS,validateBatch,movePage,removePage,restorePage,review,addTasks,makePdf,validateDraft} from './core.mjs';
-import {acquireDraftLock,openDraft,readDraft,writeDraft,eraseDraft} from './storage.mjs';
+import {LIMITS,validateBatch,movePage,removePage,restorePage,review,addTasks,renameTask,makePdf,validateDraft} from './core.mjs';
+import {acquireDraftLock,openDraft,readDraft,writeDraft,readSelection,writeSelection,eraseDraft} from './storage.mjs';
 import {importImage,drawPage,canvasBlob,demoFiles,tick} from './images.mjs';
 const $=s=>document.querySelector(s), esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let state={pages:[],tasks:[],selected:null},undo=[],busy=false,importToken=null,dbReady=false,ready=false,recoveryMode=false,saveQueue=Promise.resolve(),revision=0,downloadUrl=null,noticeTimer,busyFocus=null,zoomReturnFocus=null;
+let state={pages:[],tasks:[],selected:null},undo=[],busy=false,importToken=null,dbReady=false,ready=false,recoveryMode=false,saveQueue=Promise.resolve(),revision=0,saveEpoch=0,unsavedContent=false,editingTask=null,downloadUrl=null,noticeTimer,busyFocus=null,zoomReturnFocus=null;
 const urls=new Map();
 const current=()=>state.pages.find(p=>p.id===state.selected);
 function previewUrl(p){if(!urls.has(p.id))urls.set(p.id,URL.createObjectURL(p.preview));return urls.get(p.id);}
 function release(id){if(urls.has(id)){URL.revokeObjectURL(urls.get(id));urls.delete(id);}}
 function notice(message,error=false){clearTimeout(noticeTimer);$('#notice').textContent=message;$('#notice').classList.toggle('error',error);$('#notice').hidden=false;noticeTimer=setTimeout(()=>$('#notice').hidden=true,error?18000:8000);}
 function invalidate(){revision++;$('#human-check').checked=false;if(downloadUrl){URL.revokeObjectURL(downloadUrl);downloadUrl=null;}$('#download-result').hidden=true;}
-function persist(){
+function queueSave(write){
   if(recoveryMode){document.querySelector('#save-status').textContent='Повреждённый черновик сохранён; автосохранение приостановлено';return;}
   if(!dbReady){$('#save-status').textContent='Недоступен — сохраните PDF перед закрытием';return;}
   $('#save-status').textContent='Сохраняем на устройстве…';
-  // Serialize writes and capture state now, so older writes never win races.
-  const saved=structuredClone({version:1,pages:state.pages,tasks:state.tasks,selected:state.selected,savedAt:new Date().toISOString()});
-  const rev=revision;
-  saveQueue=saveQueue.then(()=>writeDraft(saved)).then(()=>{if(rev===revision)$('#save-status').textContent='Сохранён в этом браузере';}).catch(()=>{$('#save-status').textContent='Не сохранён: мало места или запрет браузера';notice('Не удалось сохранить черновик. Текущая работа остаётся открытой. Скачайте PDF перед закрытием.',true);});
+  const epoch=++saveEpoch;
+  saveQueue=saveQueue.then(write).then(()=>{if(epoch===saveEpoch)$('#save-status').textContent='Сохранён в этом браузере';}).catch(()=>{if(epoch===saveEpoch)$('#save-status').textContent='Не сохранён: мало места или запрет браузера';notice('Не удалось сохранить черновик. Текущая работа остаётся открытой. Скачайте PDF перед закрытием.',true);});
 }
-function changed(){invalidate();render();persist();}
+function persist(){
+  // Capture content now and serialize all writes, including view-only metadata.
+  const saved=structuredClone({version:1,pages:state.pages,tasks:state.tasks,selected:state.selected,savedAt:new Date().toISOString()}),rev=revision;
+  queueSave(async()=>{await writeDraft(saved);if(rev===revision)unsavedContent=false;});
+}
+function persistSelection(){
+  // If a content write failed or is pending, retry the full snapshot before claiming success.
+  if(unsavedContent){persist();return;}
+  const selected=state.selected;queueSave(()=>writeSelection(selected));
+}
+function changed(){invalidate();unsavedContent=true;render();persist();}
+function focusTaskButton(id){[...document.querySelectorAll('[data-action="edit-task"]')].find(e=>e.dataset.id===id)?.focus({preventScroll:true});}
+function cancelTaskEdit(){if(!editingTask)return;const id=editingTask.id;editingTask=null;render();focusTaskButton(id);}
+function saveTaskEdit(){
+  if(!editingTask||busy)return;
+  const id=editingTask.id;
+  try{const next=renameTask(state.tasks,id,editingTask.value);editingTask=null;if(next===state.tasks)render();else{state.tasks=next;changed();}focusTaskButton(id);}
+  catch(e){editingTask.error=e.message;render();$('#task-edit-input')?.focus({preventScroll:true});}
+}
 function rememberFocus(element=document.activeElement){
   if(!element?.matches('button,input,textarea,a,[tabindex]'))return null;
   if(element.id)return {elementId:element.id};
@@ -51,12 +67,16 @@ function render(){
   $('#assignments').hidden=!p;if(p)$('#assignments').innerHTML=`<h3>Что есть на этой странице?</h3><p>Отметьте задания после визуальной проверки.</p><div class="assignment-options">${state.tasks.length?state.tasks.map(t=>`<label><input type="checkbox" data-task-id="${t.id}" ${p.taskIds.includes(t.id)?'checked':''} ${busy?'disabled':''}><span>${esc(t.label)}</span></label>`).join(''):'<span class="muted">Сначала добавьте ожидаемые задания в чеклист.</span>'}</div>`;
   $('#coverage-count').textContent=`${state.tasks.length-r.unassigned.length} / ${state.tasks.length}`;
   $('#coverage-empty').hidden=state.tasks.length>0;
-  $('#task-list').innerHTML=state.tasks.map(t=>{const pages=state.pages.map((p,i)=>p.taskIds.includes(t.id)?{p,i}:null).filter(Boolean);return `<div data-task-id="${t.id}" class="task-card ${pages.length?'covered':''}"><span class="task-status" aria-label="${pages.length?'Есть привязка':'Нет привязки'}">${pages.length?'✓':'○'}</span><div><strong>${esc(t.label)}</strong><span>${pages.length?pages.map(({p,i})=>`<button class="page-link" data-action="select" data-id="${p.id}">стр. ${i+1}</button>`).join(' · '):'Нет привязанных страниц'}</span></div><button class="icon-button" data-action="delete-task" data-id="${t.id}" aria-label="Удалить задание ${esc(t.label)}" ${busy?'disabled':''}>×</button></div>`;}).join('');
+  $('#task-list').innerHTML=state.tasks.map(t=>{
+    const pages=state.pages.map((p,i)=>p.taskIds.includes(t.id)?{p,i}:null).filter(Boolean),editing=editingTask?.id===t.id;
+    const title=editing?`<form class="task-edit-form" data-task-id="${t.id}"><label class="task-edit-label" for="task-edit-input">Название задания</label><input id="task-edit-input" name="label" type="text" maxlength="160" value="${esc(editingTask.value)}" aria-invalid="${!!editingTask.error}" aria-describedby="task-edit-error"><p id="task-edit-error" class="task-edit-error" role="alert" ${editingTask.error?'':'hidden'}>${esc(editingTask.error)}</p><div class="task-edit-controls"><button class="small-button" type="submit">Сохранить</button><button class="small-button" type="button" data-action="cancel-task-edit" data-id="${t.id}">Отмена</button></div></form>`:`<strong>${esc(t.label)}</strong>`;
+    return `<div data-task-id="${t.id}" class="task-card ${pages.length?'covered':''}"><span class="task-status" aria-label="${pages.length?'Есть привязка':'Нет привязки'}">${pages.length?'✓':'○'}</span><div>${title}<span>${pages.length?pages.map(({p,i})=>`<button class="page-link" data-action="select" data-id="${p.id}">стр. ${i+1}</button>`).join(' · '):'Нет привязанных страниц'}</span></div>${editing?'':`<button class="icon-button task-rename-button" data-action="edit-task" data-id="${t.id}" aria-label="Изменить название задания ${esc(t.label)}" title="Изменить название" ${busy?'disabled':''}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1 12-12a2.8 2.8 0 0 0-4-4L4 15z"/></svg></button>`}<button class="icon-button" data-action="delete-task" data-id="${t.id}" aria-label="Удалить задание ${esc(t.label)}" ${busy?'disabled':''}>×</button></div>`;
+  }).join('');
   const warning=(tone,text)=>`<div class="check-row ${tone}"><span aria-hidden="true">${tone==='ok'?'✓':'!'}</span><p>${text}</p></div>`;
   $('#warnings').innerHTML=[!state.tasks.length?warning('warn','Список заданий пока не задан. Покрытие не проверено.'):r.unassigned.length?warning('warn',`Без привязки: ${r.unassigned.length} из ${state.tasks.length} заданий.`):warning('ok',`У всех ${state.tasks.length} заданий есть ручная привязка.`),r.duplicates.length?warning('warn',`Точные дубликаты: ${r.duplicates.map(d=>`стр. ${state.pages.indexOf(d.page)+1} = ${state.pages.indexOf(d.original)+1}`).join('; ')}.`):warning('ok','Точных дубликатов не найдено.'),r.blank.length?warning('warn',`Подозрительно пустые: ${r.blank.map(p=>`стр. ${state.pages.indexOf(p)+1}`).join(', ')}. Проверьте вручную.`):warning('ok','Эвристика не отметила пустых страниц.'),r.unmapped.length&&state.tasks.length?warning('warn',`Страниц без заданий: ${r.unmapped.length}. Это может быть обложка.`):''].join('');
   $('#export-button').disabled=!ready||busy||!state.pages.length||!$('#human-check').checked;
   $('#export-note').textContent=!state.pages.length?'Добавьте хотя бы одну страницу.':!$('#human-check').checked?'Экспорт доступен после вашей проверки.':`A4 · ${state.pages.length} стр. · текущий порядок`;
-  for(const el of [$('#import-button'),$('#demo-button'),$('#task-input'),$('#task-form button'),$('#clear-button'),$('#human-check'),...document.querySelectorAll('#viewer-tools button')])el.disabled=busy||!ready;
+  for(const el of [$('#import-button'),$('#demo-button'),$('#task-input'),$('#task-form button'),$('#clear-button'),$('#human-check'),...document.querySelectorAll('#viewer-tools button,.task-edit-form input,.task-edit-form button')])el.disabled=busy||!ready;
   $('#undo-area').hidden=!undo.length;$('#undo-area').innerHTML=undo.length?`<span title="Восстановление доступно до следующего импорта или перезагрузки">Удалена: ${esc(undo.at(-1).page.name)}<small>До импорта или перезагрузки</small></span><button data-action="undo" class="text-button" ${busy?'disabled':''}>Восстановить${undo.length>1?` (${undo.length})`:''}</button>`:'';
   if(!focused.isConnected||focused.disabled)restoreFocus(focusMark);
 }
@@ -83,13 +103,18 @@ async function openZoom(opener){const p=current();if(!p||busy)return;zoomReturnF
 document.addEventListener('click',async e=>{
   const close=e.target.closest('[data-close]');if(close){$('#'+close.dataset.close).close();return;}
   const button=e.target.closest('[data-action]');if(!button||busy)return;const {action,id}=button.dataset;
-  if(action==='select'){state.selected=id;render();return;}
+  if(action==='select'){if(!state.pages.some(p=>p.id===id))return;state.selected=id;render();persistSelection();return;}
+  if(action==='edit-task'){const task=state.tasks.find(t=>t.id===id);if(!task)return;editingTask={id,value:task.label,error:''};render();$('#task-edit-input')?.focus({preventScroll:true});$('#task-edit-input')?.select();return;}
+  if(action==='cancel-task-edit'){cancelTaskEdit();return;}
   if(action==='rotate-left')return rotate(-90);if(action==='rotate-right')return rotate(90);if(action==='zoom')return openZoom(button);
   if(action==='up'||action==='down'){state.pages=movePage(state.pages,id,state.pages.findIndex(p=>p.id===id)+(action==='up'?-1:1));changed();}
   if(action==='delete'){const result=removePage(state.pages,id);state.pages=result.pages;if(result.removed)undo.push(result.removed);if(state.selected===id)state.selected=state.pages[Math.min(result.removed.index,state.pages.length-1)]?.id||null;changed();notice('Страница удалена. Привязки можно вернуть кнопкой «Восстановить».');}
   if(action==='undo'){const item=undo.at(-1);if(!item)return;const error=validateBatch([{name:item.page.name,size:item.page.size}],state.pages);if(error){notice(error,true);return;}state.pages=restorePage(state.pages,undo.pop());state.selected=item.page.id;changed();}
-  if(action==='delete-task'){state.tasks=state.tasks.filter(t=>t.id!==id);state.pages=state.pages.map(p=>({...p,taskIds:p.taskIds.filter(t=>t!==id)}));undo=undo.map(u=>({...u,page:{...u.page,taskIds:u.page.taskIds.filter(t=>t!==id)}}));changed();}
+  if(action==='delete-task'){if(editingTask?.id===id)editingTask=null;state.tasks=state.tasks.filter(t=>t.id!==id);state.pages=state.pages.map(p=>({...p,taskIds:p.taskIds.filter(t=>t!==id)}));undo=undo.map(u=>({...u,page:{...u.page,taskIds:u.page.taskIds.filter(t=>t!==id)}}));changed();}
 });
+$('#task-list').addEventListener('input',e=>{if(e.target.id==='task-edit-input'&&editingTask)editingTask.value=e.target.value;});
+$('#task-list').addEventListener('submit',e=>{if(e.target.matches('.task-edit-form')){e.preventDefault();saveTaskEdit();}});
+$('#task-list').addEventListener('keydown',e=>{if(e.key==='Escape'&&e.target.closest('.task-edit-form')){e.preventDefault();cancelTaskEdit();}});
 $('#assignments').addEventListener('change',e=>{const p=current(),id=e.target.dataset.taskId;if(!p||!id||busy)return;p.taskIds=e.target.checked?[...new Set([...p.taskIds,id])]:p.taskIds.filter(t=>t!==id);changed();});
 $('#task-form').addEventListener('submit',e=>{e.preventDefault();if(busy||!ready)return;try{state.tasks=addTasks(state.tasks,$('#task-input').value,()=>crypto.randomUUID());$('#task-input').value='';changed();}catch(e){notice(e.message,true);}});
 $('#human-check').addEventListener('change',render);
@@ -109,7 +134,7 @@ $('#help-button').addEventListener('click',()=>$('#help-dialog').showModal());
 $('#zoom-toggle').addEventListener('click',()=>{$('#zoom-body').classList.toggle('actual');$('#zoom-toggle').textContent=$('#zoom-body').classList.contains('actual')?'Вписать страницу':'Масштаб 100%';});
 $('#zoom-dialog').addEventListener('close',()=>{$('#zoom-body').replaceChildren();restoreFocus(zoomReturnFocus);zoomReturnFocus=null;});
 $('#clear-button').addEventListener('click',()=>$('#clear-dialog').showModal());
-$('#confirm-clear').addEventListener('click',async()=>{if(busy)return;$('#clear-dialog').close();lock(true);await saveQueue;try{if(dbReady)await eraseDraft();for(const id of urls.keys())release(id);state={pages:[],tasks:[],selected:null};undo=[];recoveryMode=false;invalidate();$('#save-status').textContent=dbReady?'Черновик удалён с устройства':'Хранилище недоступно';notice(dbReady?'Черновик удалён.':'Текущая работа очищена. Хранилище недоступно; сохранённые данные удаляются в настройках браузера.',!dbReady);}catch{notice('Не удалось удалить сохранённый черновик. Закройте другие вкладки и повторите.',true);}finally{lock(false);}});
+$('#confirm-clear').addEventListener('click',async()=>{if(busy)return;$('#clear-dialog').close();lock(true);await saveQueue;try{if(dbReady)await eraseDraft();for(const id of urls.keys())release(id);state={pages:[],tasks:[],selected:null};undo=[];editingTask=null;unsavedContent=false;recoveryMode=false;invalidate();$('#save-status').textContent=dbReady?'Черновик удалён с устройства':'Хранилище недоступно';notice(dbReady?'Черновик удалён.':'Текущая работа очищена. Хранилище недоступно; сохранённые данные удаляются в настройках браузера.',!dbReady);}catch{notice('Не удалось удалить сохранённый черновик. Закройте другие вкладки и повторите.',true);}finally{lock(false);}});
 $('#export-button').addEventListener('click',async()=>{
   if(busy||!state.pages.length||!$('#human-check').checked)return;
   lock(true);const images=[];
@@ -142,7 +167,9 @@ async function init(){
             const next={...fresh,id:p.id,rotation:p.rotation,taskIds:p.taskIds};
             if(p.rotation)next.preview=await canvasBlob(await drawPage(next,1100));verified.push(next);
           }
-          state={...restored,pages:verified};if(state.pages.length)notice('Локальный черновик восстановлен. Проверьте страницы перед экспортом.');
+          state={...restored,pages:verified};
+          try{const selected=await readSelection();if(state.pages.some(p=>p.id===selected))state.selected=selected;}catch{/* A view-only read failure must not quarantine valid content. */}
+          if(state.pages.length)notice('Локальный черновик восстановлен. Проверьте страницы перед экспортом.');
         }catch{
           recoveryMode=true;state={pages:[],tasks:[],selected:null};
           notice('Локальный черновик повреждён или несовместим. Исходная запись сохранена, автосохранение приостановлено. Кнопка «Удалить локальный черновик» позволяет начать заново.',true);

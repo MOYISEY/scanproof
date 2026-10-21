@@ -28,5 +28,7 @@ function transaction(mode,action) {
   });
 }
 export const readDraft=()=>transaction('readonly',store=>store.get('current'));
-export const writeDraft=draft=>transaction('readwrite',store=>store.put(draft,'current'));
+export const readSelection=()=>transaction('readonly',store=>store.get('selection'));
+export const writeSelection=id=>transaction('readwrite',store=>store.put(id,'selection'));
+export const writeDraft=draft=>transaction('readwrite',store=>{store.delete('selection');return store.put(draft,'current');});
 export const eraseDraft=()=>transaction('readwrite',store=>store.clear());
