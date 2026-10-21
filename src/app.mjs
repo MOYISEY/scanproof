@@ -144,7 +144,7 @@ $('#export-button').addEventListener('click',async()=>{
     $('#download-result').hidden=false;$('#download-result').innerHTML=`<strong>PDF подготовлен · ${(pdf.length/1024/1024).toFixed(1)} МБ</strong><a href="${downloadUrl}" download="${name}">Скачать PDF ещё раз</a><span>Откройте файл и проверьте результат перед отправкой.</span>`;notice('PDF подготовлен в выбранном порядке. Проверьте скачанный файл.');
   }catch(e){notice(`Экспорт не выполнен: ${e.message} Текущая работа сохранена.`,true);}finally{lock(false);}
 });
-window.addEventListener('beforeunload',e=>{if(busy||$('#save-status').textContent.includes('Сохраняем')||((!dbReady||recoveryMode)&&state.pages.length)||$('#save-status').textContent.startsWith('Не сохранён')){e.preventDefault();e.returnValue='';}});
+window.addEventListener('beforeunload',e=>{if(busy||unsavedContent||$('#save-status').textContent.includes('Сохраняем')||((!dbReady||recoveryMode)&&state.pages.length)||$('#save-status').textContent.startsWith('Не сохранён')){e.preventDefault();e.returnValue='';}});
 async function init(){
   render();
   try{
