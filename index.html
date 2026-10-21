@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#163c36">
+  <meta name="description" content="Локальная проверка страниц письменной работы перед сдачей. Порядок, задания и один PDF.">
+  <title>ScanProof — работа готова к сдаче</title>
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./src/styles.css">
+  <script type="module" src="./src/app.mjs"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="ScanProof, главная"><span class="brand-icon" aria-hidden="true">▤</span>ScanProof<span class="beta">MVP</span></a>
+    <span class="privacy"><span aria-hidden="true">●</span> Файлы остаются на устройстве</span>
+    <button class="text-button" id="help-button">Как это работает</button>
+  </header>
+  <main>
+    <section class="intro">
+      <div><p class="eyebrow">ПЕРЕД ТЕМ КАК НАЖАТЬ «СДАТЬ»</p><h1>Соберите работу.<br class="mobile-only"> Проверьте каждую страницу.</h1><p class="subtitle">Расставьте фотографии, сверьтесь с заданиями и сохраните один PDF.</p></div>
+      <div class="local-status"><span class="status-dot"></span><div><strong>Локальный черновик</strong><span id="save-status" role="status">Проверяем хранилище…</span></div></div>
+    </section>
+    <div class="workflow" aria-label="Этапы работы"><span><b>1</b> Страницы</span><i></i><span><b>2</b> Покрытие заданий</span><i></i><span><b>3</b> Проверка и PDF</span></div>
+    <section class="workspace" aria-label="Рабочая область">
+      <aside class="panel pages-panel">
+        <div class="panel-heading"><div><p class="eyebrow">ПОРЯДОК В PDF</p><h2>Страницы <span id="page-count" class="count">0</span></h2></div><button id="import-button" class="small-button" aria-label="Добавить фотографии">＋ Добавить</button></div>
+        <input type="file" id="file-input" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple hidden>
+        <div class="import-progress" id="import-progress" hidden><span id="import-status" role="status"></span><button id="cancel-import" class="text-button">Отменить</button></div>
+        <div id="drop-zone" class="drop-zone" tabindex="0" role="button" aria-label="Выбрать фотографии или перетащить их сюда"><span class="upload-icon" aria-hidden="true">↥</span><strong>Добавьте фотографии</strong><span>или перетащите их сюда</span><small>JPG, PNG, WebP · до 20 страниц<br>10 МБ на файл · 50 МБ всего</small></div>
+        <div id="page-list" class="page-list"></div>
+        <div id="undo-area" class="undo-area" hidden></div>
+        <p class="panel-footnote" id="page-hint">HEIC, PDF и анимация не поддерживаются. Ошибка импорта не затронет черновик.</p>
+        <button class="text-button demo-button" id="demo-button">Попробовать синтетический пример ↗</button>
+      </aside>
+      <section class="panel viewer-panel" aria-label="Просмотр страницы">
+        <div class="viewer-heading"><div><p class="eyebrow">ПОСМОТРИТЕ ВНИМАТЕЛЬНО</p><h2 id="viewer-title">Ваша работа — здесь</h2></div><div class="viewer-tools" id="viewer-tools" hidden><button class="icon-button" data-action="rotate-left" aria-label="Повернуть влево">↶</button><button class="icon-button" data-action="rotate-right" aria-label="Повернуть вправо">↷</button><button class="icon-button" data-action="zoom" aria-label="Открыть крупный просмотр">⤢</button></div></div>
+        <div class="viewer-stage" id="viewer-stage"><div class="viewer-empty"><div class="sheet-illustration" aria-hidden="true"><span>1.</span><i></i><i></i><i></i><span>2.</span><i></i><i></i></div><h3>От фотографий к готовой работе</h3><p>Начните с импорта или откройте пример.<br>Затем проверьте порядок и читаемость.</p></div></div>
+        <div id="page-details" class="page-details" hidden></div>
+        <div id="assignments" class="assignments" hidden></div>
+      </section>
+      <aside class="review-column">
+        <section class="panel coverage-panel"><div class="panel-heading"><div><p class="eyebrow">ЧЕКЛИСТ ПОКРЫТИЯ</p><h2>Ожидаемые задания</h2></div><span id="coverage-count" class="count">0 / 0</span></div><p class="panel-description">Добавьте задания, затем отметьте их на соответствующих страницах.</p><form id="task-form"><label class="sr-only" for="task-input">Задания, каждое с новой строки</label><textarea id="task-input" rows="2" maxlength="4000" placeholder="Задание 1: уравнение&#10;Задание 2: доказательство"></textarea><button class="secondary-button" type="submit">＋ Добавить задания</button></form><div id="task-list" class="task-list"></div><div class="coverage-empty" id="coverage-empty">Вы задаёте список — ScanProof помогает не потерять ни один пункт.</div></section>
+        <section class="panel check-panel"><div class="panel-heading"><div><p class="eyebrow">ПОСЛЕДНИЙ ВЗГЛЯД</p><h2>Проверка перед сдачей</h2></div></div><div id="warnings"></div><p class="heuristic-note">Пустота — эвристика по пикселям. Дубликаты — совпадение байтов. Проверьте снимки сами: программа не читает текст и формулы.</p><label class="confirmation"><input id="human-check" type="checkbox"><span>Я проверил(а) порядок, читаемость и полноту работы.</span></label><button id="export-button" class="primary-button" disabled>Сохранить PDF <span aria-hidden="true">↓</span></button><p class="export-note" id="export-note">Добавьте хотя бы одну страницу.</p><div id="download-result" hidden></div></section>
+      </aside>
+    </section>
+    <footer><span>ScanProof / локальный рабочий инструмент</span><button id="clear-button" class="text-button">Удалить локальный черновик</button><span>Без аккаунта · без облачной обработки</span></footer>
+  </main>
+  <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+  <dialog id="help-dialog"><div class="dialog-heading"><h2>Проверка в три шага</h2><button class="icon-button" data-close="help-dialog" aria-label="Закрыть справку">×</button></div><ol><li>Добавьте фотографии. Переставьте страницы стрелками или перетаскиванием; поверните нужные снимки.</li><li>Введите ожидаемые задания. Выберите страницу и отметьте, какие задания она содержит. Одно задание может занимать несколько страниц.</li><li>Посмотрите каждую страницу крупно, разберите предупреждения, подтвердите проверку и скачайте PDF.</li></ol><h3>Что хранится локально</h3><p>Оригиналы фотографий, порядок, повороты и привязки автоматически сохраняются в IndexedDB этого браузера на этом адресе. Они не отправляются на сервер. Другой браузер или порт — другой черновик.</p><p>На общем домене GitHub Pages другие приложения этого же домена могут иметь доступ к локальным данным. Для изоляции можно запустить локальную версию. Это не резервная копия: очистка данных сайта, приватный режим, нехватка места или решение браузера могут удалить черновик. Скачайте PDF перед закрытием. Кнопка внизу удаляет сохранённый черновик и текущую работу.</p><h3>Ограничения MVP</h3><p>20 страниц, 10 МБ на файл, 50 МБ суммарно, до 24 мегапикселей на изображение. Только статические JPG/PNG/WebP. HEIC, PDF и анимация отклоняются. PDF: A4, белые поля, длинная сторона снимка до 3200 пикселей, JPEG 94%. Оригиналы в черновике не меняются.</p><p>Нет OCR, распознавания формул, исправления перспективы или оценки правильности ответа. Эвристика пустоты может ошибаться на бледных или тёмных снимках. Полноту подтверждает человек. PWA и гарантированный запуск без сети в этом релизе не заявлены.</p><button class="secondary-button" data-close="help-dialog">Понятно</button></dialog>
+  <dialog id="zoom-dialog" class="zoom-dialog"><div class="dialog-heading"><h2 id="zoom-title">Крупный просмотр</h2><div><button id="zoom-toggle" class="small-button">Масштаб 100%</button> <button class="icon-button" data-close="zoom-dialog" aria-label="Закрыть просмотр">×</button></div></div><div id="zoom-body" class="zoom-body"></div></dialog>
+  <dialog id="clear-dialog"><h2>Удалить черновик с этого устройства?</h2><p>Будут удалены фотографии, задания и привязки ScanProof в этом браузере. Скачанный PDF останется. Отменить удаление черновика нельзя.</p><div class="dialog-actions"><button class="secondary-button" data-close="clear-dialog">Оставить</button><button id="confirm-clear" class="danger-button">Удалить черновик</button></div></dialog>
+</body></html>
