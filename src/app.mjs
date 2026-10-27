@@ -82,7 +82,7 @@ function render(){
 }
 async function importFiles(files,{demo=false}={}){
   if(busy||!ready)return;
-  const error=validateBatch(files,state.pages);if(error){notice(error,true);return;}
+  const error=validateBatch(files,state.pages);if(error){$('#file-input').value='';notice(error,true);return;}
   const token={cancelled:false};importToken=token;lock(true);$('#import-progress').hidden=false;const staged=[];
   try{
     for(let i=0;i<files.length;i++) {

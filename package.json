@@ -7,7 +7,7 @@
     "dev": "node scripts/serve.mjs",
     "start": "node scripts/serve.mjs",
     "build": "node scripts/build.mjs",
-    "test": "node --experimental-vm-modules --test tests/core.test.mjs tests/build.test.mjs tests/task-edit.test.mjs tests/durability.test.mjs",
+    "test": "node --experimental-vm-modules --test tests/core.test.mjs tests/build.test.mjs tests/task-edit.test.mjs tests/durability.test.mjs tests/import-retry.test.mjs",
     "test:smoke": "node tests/smoke/run.mjs"
   },
   "engines": {
